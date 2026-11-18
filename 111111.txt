@@ -1,0 +1,1242 @@
+aaaa@aaaadeMacBook-Pro doublera1n % cd ~/Desktop/doublera1n
+
+.venv/bin/python3 -m pip install --upgrade certifi
+Requirement already satisfied: certifi in ./.venv/lib/python3.12/site-packages (2026.10.23)
+aaaa@aaaadeMacBook-Pro doublera1n % export SSL_CERT_FILE="$(.venv/bin/python3 -m certifi)"
+echo "证书路径：$SSL_CERT_FILE"
+证书路径：/Users/aaaa/Desktop/doublera1n/.venv/lib/python3.12/site-packages/certifi/cacert.pem
+aaaa@aaaadeMacBook-Pro doublera1n % PYTHONPATH=lib .venv/bin/python3 - <<'PY'
+import urllib.request
+import json
+import precheck
+
+url = "https://api.ipsw.me/v4/device/iPhone12,5?type=ipsw"
+
+print("===== Python HTTPS 测试 =====")
+with urllib.request.urlopen(url, timeout=20) as r:
+    data = json.loads(r.read().decode())
+print("HTTPS 成功，固件记录数：", len(data.get("firmwares", [])))
+
+print("\n===== 项目固件查询 =====")
+for product in ("iPhone12,5", "iPhone12,3"):
+    records = precheck.apple_builds(product)
+    print(product, "记录数：", len(records))
+    for item in records[:3]:
+        print(item)
+
+print("\n===== 最新签名版本 =====")
+print(precheck.latest_signed("iPhone12,5"))
+
+print("\n===== 24A446 状态 =====")
+print(precheck.apple_build("iPhone12,5", "24A446"))
+PY
+===== Python HTTPS 测试 =====
+HTTPS 成功，固件记录数： 114
+
+===== 项目固件查询 =====
+iPhone12,5 记录数： 114
+{'version': '27.2.1', 'build': '24B156', 'url': 'https://updates.cdn-apple.com/2026FallFCS/5a395bcb-525c-4bdd-8953-ff685b86c973/iPhone12,3,iPhone12,5_27.2.1_24B156_Restore.ipsw', 'signed': True}
+{'version': '27.2', 'build': '24B119', 'url': 'https://updates.cdn-apple.com/2026FallFCS/ec50683b-998e-4e91-9326-d902cfd5f7f9/iPhone12,3,iPhone12,5_27.2_24B119_Restore.ipsw', 'signed': False}
+{'version': '27.0.1', 'build': '24A446', 'url': 'https://updates.cdn-apple.com/2026FallFCS/585d6bab-0662-42a6-ac0f-1e0392ab92ef/iPhone12,3,iPhone12,5_27.0.1_24A446_Restore.ipsw', 'signed': False}
+iPhone12,3 记录数： 114
+{'version': '27.2.1', 'build': '24B156', 'url': 'https://updates.cdn-apple.com/2026FallFCS/5a395bcb-525c-4bdd-8953-ff685b86c973/iPhone12,3,iPhone12,5_27.2.1_24B156_Restore.ipsw', 'signed': True}
+{'version': '27.2', 'build': '24B119', 'url': 'https://updates.cdn-apple.com/2026FallFCS/ec50683b-998e-4e91-9326-d902cfd5f7f9/iPhone12,3,iPhone12,5_27.2_24B119_Restore.ipsw', 'signed': False}
+{'version': '27.0.1', 'build': '24A446', 'url': 'https://updates.cdn-apple.com/2026FallFCS/585d6bab-0662-42a6-ac0f-1e0392ab92ef/iPhone12,3,iPhone12,5_27.0.1_24A446_Restore.ipsw', 'signed': False}
+
+===== 最新签名版本 =====
+{'version': '27.2.1', 'build': '24B156', 'url': 'https://updates.cdn-apple.com/2026FallFCS/5a395bcb-525c-4bdd-8953-ff685b86c973/iPhone12,3,iPhone12,5_27.2.1_24B156_Restore.ipsw', 'signed': True}
+
+===== 24A446 状态 =====
+None
+aaaa@aaaadeMacBook-Pro doublera1n % cd ~/Desktop/doublera1n
+
+echo "===== apple_build 实际实现 ====="
+grep -n -A25 -B8 "def apple_build" lib/precheck.py
+
+echo
+echo "===== prepare_tickets 实际实现 ====="
+grep -n -A65 -B5 "def prepare_tickets" dualboot.py
+===== apple_build 实际实现 =====
+63-    try:
+64-        out = subprocess.run(['ipsw', 'version'], capture_output=True, text=True).stdout
+65-    except FileNotFoundError:
+66-        return None
+67-    m = re.search(r'Version:\s*(\d+)\.(\d+)\.(\d+)', out)
+68-    return tuple(map(int, m.groups())) if m else None
+69-
+70-
+71:def apple_builds(product):
+72-    """ipsw.me: [{'version','build','url','signed'}] newest first, or [] when offline."""
+73-    try:
+74-        d = json.load(urllib.request.urlopen(f'https://api.ipsw.me/v4/device/{product}?type=ipsw', timeout=15))
+75-    except Exception:
+76-        return []
+77-    return [{'version': f['version'], 'build': f['buildid'], 'url': f['url'], 'signed': bool(f['signed'])}
+78-            for f in d.get('firmwares', [])]
+79-
+80-
+81-# products that ship in one IPSW: AppleDB sometimes lists a build under only one of them
+82-SHARED_IPSW = {'iPhone12,3': ('iPhone12,5',), 'iPhone12,5': ('iPhone12,3',)}
+83-
+84-def appledb_build(product, build):
+85-    """Betas and RCs are not on ipsw.me: ask AppleDB through `ipsw download appledb --urls` (Apple CDN links)."""
+86-    urls = []
+87-    for dev in (product,) + SHARED_IPSW.get(product, ()):
+88-        try:
+89-            r = subprocess.run(['ipsw', 'download', 'appledb', '--os', 'iPadOS' if dev.startswith('iPad') else 'iOS',
+90-                                '--device', dev, '--build', build, '--urls'],
+91-                               capture_output=True, text=True, timeout=180)
+92-        except Exception:
+93-            continue
+94-        # iPhone IPSWs list their product types in the name; iPad ones use a marketing name (iPad_10.2_2021_...)
+95-        urls = [u for u in re.findall(r'https://\S+?_Restore\.ipsw', r.stdout + r.stderr)
+96-                if f'_{build}_' in u and (product in u or not re.search(r'(iPhone|iPad)\d+,\d+', u.rsplit('/', 1)[-1]))]
+97-        if urls:
+98-            break
+99-    if not urls:
+100-        return None
+101-    m = re.search(r'_(\d+(?:\.\d+)+)_' + re.escape(build) + '_', urls[0])
+102-    return {'version': m.group(1) if m else '?', 'build': build, 'url': urls[0], 'signed': False, 'source': 'appledb'}
+103-
+104-
+105:def apple_build(product, build):
+106-    """Release builds from ipsw.me, betas / RCs from AppleDB. 'signed' is only known for ipsw.me builds."""
+107-    return next((b for b in apple_builds(product) if b['build'] == build), None) or appledb_build(product, build)
+108-
+109-
+110-def latest_signed(product):
+111-    """Newest build Apple still signs for product (its TSS ticket wraps the setup chain of any build)."""
+112-    return next((b for b in apple_builds(product) if b['signed']), None)
+113-
+114-
+115-def find_in(root, rel):
+116-    for c in [os.path.join(root, rel)] + [os.path.join(root, d, rel) for d in (os.listdir(root) if os.path.isdir(root) else [])]:
+117-        if os.path.isfile(c): return c
+118-    return None
+119-
+120-
+121-def remote_extract(url, pattern, out):
+122-    r = subprocess.run(['ipsw', 'extract', '--remote', url, '--pattern', pattern, '-o', out],
+123-                       capture_output=True, text=True)
+124-    if r.returncode: raise SystemExit(f"ipsw extract --remote failed:\n{(r.stdout + r.stderr)[-800:]}")
+125-
+126-
+127-def has_identity(man, board):
+128-    m = plistlib.load(open(man, 'rb'))
+129-    return any(i['Info'].get('DeviceClass', '').lower() == board for i in m['BuildIdentities'])
+130-
+
+===== prepare_tickets 实际实现 =====
+449-    finally:
+450-        run('hdiutil', 'detach', mnt, check=False, capture=True)
+451-        shutil.rmtree(tmp, ignore_errors=True)
+452-    say("rootfs: done")
+453-
+454:def prepare_tickets(ws):
+455-    """TSS-personalised IM4M (for the setup chain and the SEP image) + rsep.img4. Needs the phone in (pwned) DFU."""
+456-    if os.path.exists(ws.p('out/apticket.im4m')) and os.path.exists(ws.p('out/rsep.img4')):
+457-        return
+458-    manifest = ws.p('build/ipsw/BuildManifest.plist')
+459-    sep = glob.glob(ws.p('build/ipsw/Firmware/all_flash/sep-firmware.*.RELEASE.im4p'))
+460-    import precheck
+461-    product = ws.profile['product_types'][0]
+462-    me = precheck.apple_build(product, ws.profile['build'])
+463-    if me is not None and not me['signed']:
+464-        # The patched iBoot does not verify AP images: borrow the newest signed build's ticket (and its SEP image,
+465-        # so ticket and SEP digest match) for the setup chain. OS B later uses the ticket installed on the phone.
+466-        latest = precheck.latest_signed(product) or die(f"Apple signs no iOS build for {product} right now")
+467-        say(f"iOS {ws.profile['version']} is no longer signed: using the APTicket of iOS {latest['version']} "
+468-            f"({latest['build']}) for the setup chain")
+469-        d = precheck.fetch_parts(latest['url'], latest['build'], ws.profile['board'], ['RestoreSEP'])
+470-        manifest = os.path.join(d, 'BuildManifest.plist')
+471-        sep = glob.glob(os.path.join(d, 'Firmware/all_flash/sep-firmware.*.RELEASE.im4p'))
+472-    say("TSS: requesting an APTicket for this phone from Apple ...")
+473-    r = run(sys.executable, os.path.join(LIB, 'get_apticket.py'), manifest,
+474-            ws.p('out/apticket.im4m'), '--board', ws.profile['board'], check=False, capture=True)
+475-    if r.returncode or not os.path.exists(ws.p('out/apticket.im4m')):
+476-        die("TSS request failed\n" + (r.stdout + r.stderr)[-800:])
+477-    if not sep:
+478-        die("sep-firmware not found")
+479-    run(sys.executable, os.path.join(LIB, 'mkimg4.py'), sep[0], ws.p('out/apticket.im4m'), ws.p('out/rsep.img4'),
+480-        '--tag', 'rsep', capture=True)
+481-
+482-def prepare_iboot(ws):
+483-    from pyimg4 import IM4P
+484-    import plistlib
+485-    m = plistlib.load(open(ws.p('build/ipsw/BuildManifest.plist'), 'rb'))
+486-    ident = [b for b in m['BuildIdentities'] if b['Info'].get('DeviceClass', '').lower() == ws.profile['board']
+487-             and b['Info'].get('RestoreBehavior') == 'Erase'][0]
+488-    for key, out, args in (('iBSS', 'iBoot.min.raw', 'rd=md0 -v wdt=-1 serial=3 debug=0x2014e'),
+489-                           ('iBEC', 'iBoot.osb.raw', '-v serial=3 debug=0x2014e launchd_unsecure_cache=1 wdt=-1')):
+490-        if os.path.exists(ws.p('out', out)):
+491-            continue
+492-        p = IM4P(open(ws.p('build/ipsw', ident['Manifest'][key]['Info']['Path']), 'rb').read())
+493-        try:
+494-            p.payload.decompress()
+495-        except Exception:
+496-            pass
+497-        raw = ws.p('build', key + '.stock.raw'); open(raw, 'wb').write(p.payload.output().data)
+498-        run(sys.executable, os.path.join(LIB, 'patch_iboot.py'), '--no-fsboot', f'--boot-args={args}', raw,
+499-            ws.p('out', out), capture=True)
+500-
+501-def build_setup_chain(ws, mode):
+502-    ws.py('mk_setuprd.py', mode, capture=True)
+503-    ws.py('mk_chain.py', mode, capture=True)
+504-    ws.py('mk_kernel.py', capture=True)     # after mk_chain: replaces its stock kernel/TXM with the patched ones
+505-
+506-def setup_boot(ws, mode):
+507-    """Boot the setup ramdisk and follow rdsetup on the UART. Returns the captured bytes."""
+508-    ser = serial_source(ws.p('logs', f'setup-{mode}-{time.strftime("%Y%m%d-%H%M%S")}.log'))
+509-    if not isinstance(ser, SerialFileTail) and not ser.available():
+510-        die("no serial port of the pwned-DFU board (/dev/cu.usbmodem*) - needed to read the setup result.\n"
+511-            "    (if another program owns the UART: DUALBOOT_SERIAL_LOG=<its log file>)")
+512-    say("boot setup ramdisk ...")
+513-    r = run(sys.executable, os.path.join(LIB, 'boot_chain.py'), env=ws.env(), check=False)
+514-    if r.returncode:
+515-        die("sending the setup chain failed - put the phone back into pwned DFU and retry")
+516-    done = [b'SETUP DONE', b'SETUP FAILED'] if mode == 'install' else [b'REMOVE DONE', b'REMOVE FAILED']
+517-    say(f"waiting for rdsetup ({'create DataB + copy data + read the APTicket' if mode == 'install' else 'delete DataB'}) "
+518-        "- this can take a few minutes ...")
+519-    last = [0.0]
+aaaa@aaaadeMacBook-Pro doublera1n % PYTHONPATH=lib .venv/bin/python3 - <<'PY'
+import precheck
+
+records = precheck.apple_builds("iPhone12,5")
+
+print("===== 直接匹配 24A446 =====")
+for item in records:
+    if item.get("build") == "24A446":
+        print(repr(item))
+        print("signed:", item.get("signed"))
+
+print("\n===== 函数返回值 =====")
+print(repr(precheck.apple_build("iPhone12,5", "24A446")))
+PY
+===== 直接匹配 24A446 =====
+{'version': '27.0.1', 'build': '24A446', 'url': 'https://updates.cdn-apple.com/2026FallFCS/585d6bab-0662-42a6-ac0f-1e0392ab92ef/iPhone12,3,iPhone12,5_27.0.1_24A446_Restore.ipsw', 'signed': False}
+signed: False
+
+===== 函数返回值 =====
+{'version': '27.0.1', 'build': '24A446', 'url': 'https://updates.cdn-apple.com/2026FallFCS/585d6bab-0662-42a6-ac0f-1e0392ab92ef/iPhone12,3,iPhone12,5_27.0.1_24A446_Restore.ipsw', 'signed': False}
+aaaa@aaaadeMacBook-Pro doublera1n % 
+aaaa@aaaadeMacBook-Pro doublera1n % 
+aaaa@aaaadeMacBook-Pro doublera1n % 
+aaaa@aaaadeMacBook-Pro doublera1n % 
+aaaa@aaaadeMacBook-Pro doublera1n % 
+aaaa@aaaadeMacBook-Pro doublera1n % 
+aaaa@aaaadeMacBook-Pro doublera1n % 
+aaaa@aaaadeMacBook-Pro doublera1n % 
+aaaa@aaaadeMacBook-Pro doublera1n % 
+aaaa@aaaadeMacBook-Pro doublera1n % 
+aaaa@aaaadeMacBook-Pro doublera1n % 
+aaaa@aaaadeMacBook-Pro doublera1n % 
+aaaa@aaaadeMacBook-Pro doublera1n % 
+aaaa@aaaadeMacBook-Pro doublera1n % 
+aaaa@aaaadeMacBook-Pro doublera1n % 
+aaaa@aaaadeMacBook-Pro doublera1n % 
+aaaa@aaaadeMacBook-Pro doublera1n % 
+aaaa@aaaadeMacBook-Pro doublera1n % 
+aaaa@aaaadeMacBook-Pro doublera1n % cd ~/Desktop/doublera1n
+
+echo "===== 设备配置 ====="
+grep -n -A35 -B5 "product_types" profiles/* 2>/dev/null
+
+echo
+echo "===== 固件与签名检测 ====="
+PYTHONPATH=lib .venv/bin/python3 - <<'PY'
+import precheck
+
+product = "iPhone12,5"
+build = "24A446"
+
+target = precheck.apple_build(product, build)
+latest = precheck.latest_signed(product)
+
+print("目标固件:", target)
+print("最新签名:", latest)
+
+if target:
+    print("目标版本:", target["version"])
+    print("目标 Build:", target["build"])
+    print("目标签名:", target["signed"])
+
+if latest:
+    print("签名版本:", latest["version"])
+    print("签名 Build:", latest["build"])
+    print("签名 IPSW:", latest["url"])
+PY
+
+echo
+echo "===== 项目依赖 ====="
+.venv/bin/python3 -m pip check
+===== 设备配置 =====
+
+===== 固件与签名检测 =====
+目标固件: {'version': '27.0.1', 'build': '24A446', 'url': 'https://updates.cdn-apple.com/2026FallFCS/585d6bab-0662-42a6-ac0f-1e0392ab92ef/iPhone12,3,iPhone12,5_27.0.1_24A446_Restore.ipsw', 'signed': False}
+最新签名: {'version': '27.2.1', 'build': '24B156', 'url': 'https://updates.cdn-apple.com/2026FallFCS/5a395bcb-525c-4bdd-8953-ff685b86c973/iPhone12,3,iPhone12,5_27.2.1_24B156_Restore.ipsw', 'signed': True}
+目标版本: 27.0.1
+目标 Build: 24A446
+目标签名: False
+签名版本: 27.2.1
+签名 Build: 24B156
+签名 IPSW: https://updates.cdn-apple.com/2026FallFCS/5a395bcb-525c-4bdd-8953-ff685b86c973/iPhone12,3,iPhone12,5_27.2.1_24B156_Restore.ipsw
+
+===== 项目依赖 =====
+No broken requirements found.
+aaaa@aaaadeMacBook-Pro doublera1n % 
+aaaa@aaaadeMacBook-Pro doublera1n % 
+aaaa@aaaadeMacBook-Pro doublera1n % 
+aaaa@aaaadeMacBook-Pro doublera1n % 
+aaaa@aaaadeMacBook-Pro doublera1n % 
+aaaa@aaaadeMacBook-Pro doublera1n % 
+aaaa@aaaadeMacBook-Pro doublera1n % 
+aaaa@aaaadeMacBook-Pro doublera1n % 
+aaaa@aaaadeMacBook-Pro doublera1n % 
+aaaa@aaaadeMacBook-Pro doublera1n % 
+aaaa@aaaadeMacBook-Pro doublera1n % 
+aaaa@aaaadeMacBook-Pro doublera1n % 
+aaaa@aaaadeMacBook-Pro doublera1n % 
+aaaa@aaaadeMacBook-Pro doublera1n % cd ~/Desktop/doublera1n
+
+echo "===== 项目目录 ====="
+ls -la
+
+echo
+echo "===== profiles 目录 ====="
+ls -la profiles 2>&1
+
+echo
+echo "===== 查找设备配置 ====="
+find . -not -path './.venv/*' \
+       -not -path './.git/*' \
+       -maxdepth 4 -type f
+
+echo
+echo "===== 搜索设备型号和配置字段 ====="
+grep -RniE 'product_types|iPhone12,5|board|product_type' \
+    --exclude-dir=.venv \
+    --exclude-dir=.git \
+    --exclude='*.ipsw' .
+===== 项目目录 =====
+total 904
+drwxrwxr-x@ 20 aaaa  staff     640 11 18 18:58 .
+drwx------+ 13 aaaa  staff     416 11 18 21:33 ..
+-rw-r--r--@  1 aaaa  staff   10244 11 18 22:32 .DS_Store
+-rw-rw-r--@  1 aaaa  staff      36 11 16 07:34 .gitignore
+drwxr-xr-x   7 aaaa  staff     224 11 18 19:07 .venv
+-rwxrwxr-x@  1 aaaa  staff     566 11 16 07:34 boot.sh
+-rw-rw-r--@  1 aaaa  staff  199139 11 16 07:34 demo.jpg
+drwxrwxr-x@  9 aaaa  staff     288 11 16 07:34 device
+-rwxrwxr-x@  1 aaaa  staff   66893 11 16 07:34 dualboot.py
+-rwxrwxr-x@  1 aaaa  staff   10593 11 16 07:34 dualboot.sh
+drwxrwxr-x@ 25 aaaa  staff     800 11 18 19:07 lib
+-rw-rw-r--@  1 aaaa  staff    2434 11 16 07:34 LICENSE
+drwxrwxr-x@  7 aaaa  staff     224 11 18 18:58 payload
+-rw-rw-r--@  1 aaaa  staff  136607 11 16 07:34 pico_uart.jpg
+drwxrwxr-x@ 13 aaaa  staff     416 11 18 21:39 profiles
+-rw-rw-r--@  1 aaaa  staff    6483 11 16 07:34 README.md
+-rw-rw-r--@  1 aaaa  staff      39 11 16 07:34 requirements.txt
+-rwxrwxr-x@  1 aaaa  staff    3194 11 16 07:34 setup.sh
+drwxrwxr-x@ 22 aaaa  staff     704 11 16 07:34 src
+drwxrwxr-x@  3 aaaa  staff      96 11 16 07:34 tools
+
+===== profiles 目录 =====
+total 0
+drwxrwxr-x@  3 aaaa  staff   96 11 16 07:34 _common
+drwxrwxr-x@ 13 aaaa  staff  416 11 18 21:39 .
+drwxrwxr-x@ 20 aaaa  staff  640 11 18 18:58 ..
+drwxrwxr-x@ 14 aaaa  staff  448 11 16 07:34 d421ap-24A437
+drwxrwxr-x@ 14 aaaa  staff  448 11 16 07:34 d421ap-24A446
+drwxrwxr-x@ 18 aaaa  staff  576 11 16 07:34 d421ap-24B119
+drwxrwxr-x@ 18 aaaa  staff  576 11 16 07:34 d421ap-24C5037i
+drwxr-xr-x  18 aaaa  staff  576 11 18 22:16 d431ap-24A446
+drwxrwxr-x@ 14 aaaa  staff  448 11 16 07:34 d431ap-24B119
+drwxrwxr-x@ 14 aaaa  staff  448 11 16 07:34 d79ap-24B119
+drwxrwxr-x@ 14 aaaa  staff  448 11 16 07:34 j181ap-24B119
+drwxrwxr-x@ 14 aaaa  staff  448 11 16 07:34 j182ap-24B119
+drwxrwxr-x@ 14 aaaa  staff  448 11 16 07:34 n104ap-24B119
+
+===== 查找设备配置 =====
+./setup.sh
+./tools/usbliter8ctl
+./.DS_Store
+./LICENSE
+./requirements.txt
+./dualboot.py
+./payload/.DS_Store
+./payload/boot/bpexec
+./payload/boot/launchctl
+./payload/boot/com.apple.mobileactivationd.plist
+./payload/boot/bootstrap.tar.gz
+./payload/boot/dyld-os2
+./payload/boot/dyld
+./payload/boot/jbloader
+./payload/boot/obhook.dylib
+./payload/boot/lsimg
+./payload/boot/hactpoke
+./payload/boot/launchd
+./payload/boot/maactivate
+./payload/boot/hacthook.dylib
+./payload/setup/rdsetup
+./payload/pkgs/ellekit.deb
+./payload/pkgs/libkrw0-tfp0_1.1.1-2_iphoneos-arm64.deb
+./payload/pkgs/sileo.deb
+./payload/pkgs/Sileo.app.tar
+./payload/device/obpair.dylib
+./payload/device/obhook.deny
+./payload/device/obkeychain.dylib
+./payload/device/os2vol
+./payload/device/sbextissue
+./payload/device/obcoreauth.dylib
+./payload/device/obremoteui.dylib
+./payload/device/kcacl
+./payload/device/pfwatch
+./payload/device/systemhook.dylib
+./payload/device/obremoteui.plist
+./payload/device/uicache27
+./payload/device/lsq
+./payload/device/PreferenceLoader27.dylib
+./payload/device/sysapps
+./payload/device/PreferenceLoader27.plist
+./payload/device/obfdr.dylib
+./payload/device/stackdump
+./payload/device/mkbstate
+./payload/device/obhookctl
+./payload/device/kcq
+./payload/device/dnsq
+./payload/device/personaalloc
+./demo.jpg
+./README.md
+./.gitignore
+./pico_uart.jpg
+./lib/boot_chain.py
+./lib/get_apticket.py
+./lib/mkprofile.py
+./lib/pf.py
+./lib/mk_chain.py
+./lib/osbcfg.py
+./lib/patch_sileo.py
+./lib/mkimg4.py
+./lib/patchfinder/resolve.py
+./lib/patchfinder/kernel_cm.py
+./lib/patchfinder/txm.py
+./lib/patchfinder/kernel_restore.py
+./lib/patchfinder/kernel_policy.py
+./lib/patchfinder/__init__.py
+./lib/patchfinder/core.py
+./lib/patchfinder/__pycache__/core.cpython-312.pyc
+./lib/patchfinder/__pycache__/kernel_restore.cpython-312.pyc
+./lib/patchfinder/__pycache__/userland.cpython-312.pyc
+./lib/patchfinder/__pycache__/kernel_cs.cpython-312.pyc
+./lib/patchfinder/__pycache__/kernel_policy.cpython-312.pyc
+./lib/patchfinder/__pycache__/objc.cpython-312.pyc
+./lib/patchfinder/__pycache__/kernel_cm.cpython-312.pyc
+./lib/patchfinder/__pycache__/resolve.cpython-312.pyc
+./lib/patchfinder/__pycache__/txm.cpython-312.pyc
+./lib/patchfinder/__pycache__/kernel_cm_signatures.cpython-312.pyc
+./lib/patchfinder/kernel_cs.py
+./lib/patchfinder/objc.py
+./lib/patchfinder/userland.py
+./lib/patchfinder/kernel_cm_signatures.py
+./lib/kpatchfind.py
+./lib/patch_iboot.py
+./lib/mk_osb.py
+./lib/insert_dylib.py
+./lib/__pycache__/common.cpython-312.pyc
+./lib/__pycache__/mkprofile.cpython-312.pyc
+./lib/__pycache__/dt_patch.cpython-312.pyc
+./lib/__pycache__/kpf.cpython-312.pyc
+./lib/__pycache__/precheck.cpython-312.pyc
+./lib/__pycache__/kpatchfind.cpython-312.pyc
+./lib/__pycache__/pf.cpython-312.pyc
+./lib/mk_osbjb.py
+./lib/mk_setuprd.py
+./lib/mk_kernel.py
+./lib/parse_ticket.py
+./lib/precheck.py
+./lib/common.py
+./lib/kpf.py
+./lib/mkdaemon.py
+./lib/dt_patch.py
+./device/osb-boot.sh
+./device/sysapps-refresh.sh
+./device/provision.sh
+./device/uicache.wrapper.sh
+./device/jbjob.sh
+./device/os2-stage.sh
+./device/obhook-restart.sh
+./profiles/j182ap-24B119/kernel-osb.json
+./profiles/j182ap-24B119/iconservicesagent.json
+./profiles/j182ap-24B119/txm-cs-only.json
+./profiles/j182ap-24B119/kernel-ramdisk.json
+./profiles/j182ap-24B119/kernel-vm-fault-cs-bypass.json
+./profiles/j182ap-24B119/lockdownd.ents-add.plist
+./profiles/j182ap-24B119/kernel-restore-nodebugger.json
+./profiles/j182ap-24B119/kernel-boot-jit.json
+./profiles/j182ap-24B119/txm-boot-permissive.json
+./profiles/j182ap-24B119/securityd.json
+./profiles/j182ap-24B119/lockdownd.json
+./profiles/j182ap-24B119/profile.json
+./profiles/n104ap-24B119/kernel-osb.json
+./profiles/n104ap-24B119/iconservicesagent.json
+./profiles/n104ap-24B119/txm-cs-only.json
+./profiles/n104ap-24B119/kernel-ramdisk.json
+./profiles/n104ap-24B119/kernel-vm-fault-cs-bypass.json
+./profiles/n104ap-24B119/lockdownd.ents-add.plist
+./profiles/n104ap-24B119/kernel-restore-nodebugger.json
+./profiles/n104ap-24B119/kernel-boot-jit.json
+./profiles/n104ap-24B119/txm-boot-permissive.json
+./profiles/n104ap-24B119/securityd.json
+./profiles/n104ap-24B119/lockdownd.json
+./profiles/n104ap-24B119/profile.json
+./profiles/d421ap-24B119/kernel-osb.json
+./profiles/d421ap-24B119/iconservicesagent.json
+./profiles/d421ap-24B119/coreauthd.json
+./profiles/d421ap-24B119/txm-cs-only.json
+./profiles/d421ap-24B119/ctkd.json
+./profiles/d421ap-24B119/kernel-ramdisk.json
+./profiles/d421ap-24B119/mobileactivationd.json
+./profiles/d421ap-24B119/kernel-vm-fault-cs-bypass.json
+./profiles/d421ap-24B119/lockdownd.ents-add.plist
+./profiles/d421ap-24B119/kernel-restore-nodebugger.json
+./profiles/d421ap-24B119/kernel-boot-jit.json
+./profiles/d421ap-24B119/txm-boot-permissive.json
+./profiles/d421ap-24B119/commcenter.json
+./profiles/d421ap-24B119/securityd.json
+./profiles/d421ap-24B119/lockdownd.json
+./profiles/d421ap-24B119/profile.json
+./profiles/_common/lockdownd.ents-add.plist
+./profiles/d431ap-24B119/kernel-osb.json
+./profiles/d431ap-24B119/iconservicesagent.json
+./profiles/d431ap-24B119/txm-cs-only.json
+./profiles/d431ap-24B119/kernel-ramdisk.json
+./profiles/d431ap-24B119/kernel-vm-fault-cs-bypass.json
+./profiles/d431ap-24B119/lockdownd.ents-add.plist
+./profiles/d431ap-24B119/kernel-restore-nodebugger.json
+./profiles/d431ap-24B119/kernel-boot-jit.json
+./profiles/d431ap-24B119/txm-boot-permissive.json
+./profiles/d431ap-24B119/securityd.json
+./profiles/d431ap-24B119/lockdownd.json
+./profiles/d431ap-24B119/profile.json
+./profiles/d421ap-24C5037i/kernel-osb.json
+./profiles/d421ap-24C5037i/iconservicesagent.json
+./profiles/d421ap-24C5037i/coreauthd.json
+./profiles/d421ap-24C5037i/txm-cs-only.json
+./profiles/d421ap-24C5037i/ctkd.json
+./profiles/d421ap-24C5037i/kernel-ramdisk.json
+./profiles/d421ap-24C5037i/mobileactivationd.json
+./profiles/d421ap-24C5037i/kernel-vm-fault-cs-bypass.json
+./profiles/d421ap-24C5037i/lockdownd.ents-add.plist
+./profiles/d421ap-24C5037i/kernel-restore-nodebugger.json
+./profiles/d421ap-24C5037i/kernel-boot-jit.json
+./profiles/d421ap-24C5037i/txm-boot-permissive.json
+./profiles/d421ap-24C5037i/commcenter.json
+./profiles/d421ap-24C5037i/securityd.json
+./profiles/d421ap-24C5037i/lockdownd.json
+./profiles/d421ap-24C5037i/profile.json
+./profiles/d421ap-24A446/kernel-osb.json
+./profiles/d421ap-24A446/iconservicesagent.json
+./profiles/d421ap-24A446/txm-cs-only.json
+./profiles/d421ap-24A446/kernel-ramdisk.json
+./profiles/d421ap-24A446/kernel-vm-fault-cs-bypass.json
+./profiles/d421ap-24A446/lockdownd.ents-add.plist
+./profiles/d421ap-24A446/kernel-restore-nodebugger.json
+./profiles/d421ap-24A446/kernel-boot-jit.json
+./profiles/d421ap-24A446/txm-boot-permissive.json
+./profiles/d421ap-24A446/securityd.json
+./profiles/d421ap-24A446/lockdownd.json
+./profiles/d421ap-24A446/profile.json
+./profiles/j181ap-24B119/kernel-osb.json
+./profiles/j181ap-24B119/iconservicesagent.json
+./profiles/j181ap-24B119/txm-cs-only.json
+./profiles/j181ap-24B119/kernel-ramdisk.json
+./profiles/j181ap-24B119/kernel-vm-fault-cs-bypass.json
+./profiles/j181ap-24B119/lockdownd.ents-add.plist
+./profiles/j181ap-24B119/kernel-restore-nodebugger.json
+./profiles/j181ap-24B119/kernel-boot-jit.json
+./profiles/j181ap-24B119/txm-boot-permissive.json
+./profiles/j181ap-24B119/securityd.json
+./profiles/j181ap-24B119/lockdownd.json
+./profiles/j181ap-24B119/profile.json
+./profiles/d421ap-24A437/kernel-osb.json
+./profiles/d421ap-24A437/iconservicesagent.json
+./profiles/d421ap-24A437/txm-cs-only.json
+./profiles/d421ap-24A437/kernel-ramdisk.json
+./profiles/d421ap-24A437/kernel-vm-fault-cs-bypass.json
+./profiles/d421ap-24A437/lockdownd.ents-add.plist
+./profiles/d421ap-24A437/kernel-restore-nodebugger.json
+./profiles/d421ap-24A437/kernel-boot-jit.json
+./profiles/d421ap-24A437/txm-boot-permissive.json
+./profiles/d421ap-24A437/securityd.json
+./profiles/d421ap-24A437/lockdownd.json
+./profiles/d421ap-24A437/profile.json
+./profiles/d79ap-24B119/kernel-osb.json
+./profiles/d79ap-24B119/iconservicesagent.json
+./profiles/d79ap-24B119/txm-cs-only.json
+./profiles/d79ap-24B119/kernel-ramdisk.json
+./profiles/d79ap-24B119/kernel-vm-fault-cs-bypass.json
+./profiles/d79ap-24B119/lockdownd.ents-add.plist
+./profiles/d79ap-24B119/kernel-restore-nodebugger.json
+./profiles/d79ap-24B119/kernel-boot-jit.json
+./profiles/d79ap-24B119/txm-boot-permissive.json
+./profiles/d79ap-24B119/securityd.json
+./profiles/d79ap-24B119/lockdownd.json
+./profiles/d79ap-24B119/profile.json
+./profiles/d431ap-24A446/kernel-osb.json
+./profiles/d431ap-24A446/iconservicesagent.json
+./profiles/d431ap-24A446/coreauthd.json
+./profiles/d431ap-24A446/txm-cs-only.json
+./profiles/d431ap-24A446/ctkd.json
+./profiles/d431ap-24A446/kernel-ramdisk.json
+./profiles/d431ap-24A446/mobileactivationd.json
+./profiles/d431ap-24A446/kernel-vm-fault-cs-bypass.json
+./profiles/d431ap-24A446/lockdownd.ents-add.plist
+./profiles/d431ap-24A446/kernel-restore-nodebugger.json
+./profiles/d431ap-24A446/kernel-boot-jit.json
+./profiles/d431ap-24A446/txm-boot-permissive.json
+./profiles/d431ap-24A446/commcenter.json
+./profiles/d431ap-24A446/securityd.json
+./profiles/d431ap-24A446/lockdownd.json
+./profiles/d431ap-24A446/profile.json
+./boot.sh
+./dualboot.sh
+./src/obcoreauth/obcoreauth.m
+./src/jbinit/launchd.ents.plist
+./src/jbinit/jbloader.ents.plist
+./src/jbinit/lsq.m
+./src/jbinit/bpexec.c
+./src/jbinit/jbloader.c
+./src/jbinit/com.apple.mobileactivationd.plist
+./src/jbinit/sysapps.ents.plist
+./src/jbinit/lsimg.c
+./src/jbinit/start.S
+./src/jbinit/stub.c
+./src/jbinit/hactpoke.c
+./src/jbinit/main.c
+./src/jbinit/lsq.ents.plist
+./src/jbinit/hacthook.m
+./src/jbinit/maactivate.m
+./src/jbinit/maactivate.ents.plist
+./src/jbinit/stackdump.c
+./src/jbinit/sysapps.m
+./src/launchctl/build.sh
+./src/launchctl/weakimport.py
+./src/rdsetup.ents.plist
+./src/obpair/obpair.c
+./src/obpair/obpair_auth.m
+./src/pfwatch/pfruntimeprobe.m
+./src/pfwatch/pfwatch.m
+./src/pfwatch/pfwatch.ent
+./src/obremoteui/obremoteui.m
+./src/obremoteui/obremoteui.plist
+./src/obhook/obhook.deny
+./src/obhook/obhookctl.c
+./src/obhook/sbextissue.c
+./src/obhook/obhook_session.h
+./src/obhook/obhook.c
+./src/obhook/systemhook_icon.c
+./src/obkeychain/obkeychain.m
+./src/obkeychain/AppleKeyStore.tbd
+./src/obkeychain/obacl.m
+./src/dnsq.c
+./src/pl27/loader.m
+./src/pl27/bridge.swift
+./src/pl27/build.sh
+./src/pl27/Support/PLSwiftMeta.h
+./src/pl27/Support/PLSwiftString.swift
+./src/pl27/Support/PLHeap.m
+./src/pl27/Support/LICENSE
+./src/pl27/Support/PLHeap.h
+./src/pl27/Support/PLSwiftMeta.m
+./src/pl27/PreferenceLoader27.plist
+./src/pl27/bridge.m
+./src/pl27/NOTICE.md
+./src/build.sh
+./src/os2vol.c
+./src/kcq.m
+./src/mkb.c
+./src/kcacl.m
+./src/os2vol.ents.plist
+./src/obfdr/obradio.m
+./src/obfdr/obfdr.c
+./src/obfdr/build.sh
+./src/obfdr/obari.cpp
+./src/rdsetup.c
+./src/personaalloc/personaalloc.ents.plist
+./src/personaalloc/personaalloc.c
+
+===== 搜索设备型号和配置字段 =====
+./dualboot.py:26:                    say, warn, die, run, ask, host_check, irec_query, wait_dfu, board_of, list_profiles,
+./dualboot.py:27:                    find_profile, Workspace, SSH, SSH_PORT, device_udid, WORKROOT, LIB, PAYLOAD, BOARD_PRODUCTS,
+./dualboot.py:28:                    BOARD_HELP)
+./dualboot.py:42:    board = board_of(q)
+./dualboot.py:45:            prof = find_profile(s.get('board', board), s['build'])
+./dualboot.py:66:    say(f"iPhone ECID {q['ECID']}  board {ws.profile['board']}  iOS {ws.profile['version']} ({ws.profile['build']})")
+./dualboot.py:68:    if sel.get('board') == ws.profile['board'] and sel.get('build') and sel['build'] != ws.profile['build']:
+./dualboot.py:97:        say(f"profile {p['name']}: {', '.join(p['product_types'])} iOS {p['version']} ({p['build']})"
+./dualboot.py:119:    cands = [Workspace(d.split('/')[-1].split('-')[0], find_profile(s.get('board'), s.get('build')))
+./dualboot.py:127:        d, s = alls[0]; cands = [Workspace(os.path.basename(d).split('-')[0], find_profile(s['board'], s['build']))]
+./dualboot.py:150:    return Workspace(os.path.basename(d).split('-')[0], find_profile(s['board'], s['build']))
+./dualboot.py:163:    """The phone is booted into iOS on USB: take its board and build as the selection (2nd Data must match it)."""
+./dualboot.py:164:    board = {v: k for k, v in BOARD_PRODUCTS.items()}.get(det[0]) or die(f"{det[0]} is not supported (A13 only)")
+./dualboot.py:166:    if (sel.get('board'), sel.get('build')) != (board, det[2]):
+./dualboot.py:167:        save_selected(board=board, build=det[2], version=det[1], ipsw='')
+./dualboot.py:168:    say(f"{det[0]} ({board}) on iOS {det[1]} ({det[2]})")
+./dualboot.py:197:    seen = seen or (sel.get('build') if sel.get('board') == (ws.profile['board'] if ws else None) else None)
+./dualboot.py:244:def detect_board():
+./dualboot.py:245:    """Board of the iPhone on USB: from DFU/recovery (CPID/BDID) or from iOS (ProductType); None if unknown."""
+./dualboot.py:248:        return board_of(q)
+./dualboot.py:250:    return {v: k for k, v in BOARD_PRODUCTS.items()}.get(det[0]) if det else None
+./dualboot.py:252:def pick_board(a=None):
+./dualboot.py:253:    """--board, else the connected iPhone, else the last selection, else iPhone 11 Pro."""
+./dualboot.py:254:    return (getattr(a, 'board', None) or detect_board() or load_selected().get('board') or 'd421ap').lower()
+./dualboot.py:256:def version_choices(board):
+./dualboot.py:257:    """[(build, version, label)] - local profiles + Apple's iOS 27.x builds for the board."""
+./dualboot.py:258:    local = {p['build']: p for p in list_profiles() if p['board'] == board}
+./dualboot.py:259:    pub = {b['build']: b for b in public_builds(BOARD_PRODUCTS.get(board, 'iPhone12,3'))}
+./dualboot.py:267:def ensure_profile(board, build, version='', ipsw=None):
+./dualboot.py:268:    """Profile for board/build; generated from the IPSW when this build has none yet."""
+./dualboot.py:269:    prof = find_profile(board, build)
+./dualboot.py:272:    pseudo = {'board': board, 'build': build, 'version': version, 'product_types': [BOARD_PRODUCTS.get(board, '')]}
+./dualboot.py:275:    run(sys.executable, os.path.join(LIB, 'mkprofile.py'), '--ipsw', ipsw, '--board', board)
+./dualboot.py:276:    return find_profile(board, build) or die(f"could not generate a profile for {build}")
+./dualboot.py:284:        ws.profile = find_profile(ws.profile['board'], ws.profile['build'])
+./dualboot.py:287:    board = pick_board(a)
+./dualboot.py:288:    ch = version_choices(board)
+./dualboot.py:295:    say(f"Board {board}. Selected: {('iOS ' + sel['version'] + ' (' + sel['build'] + ')') if sel.get('build') else 'none'}")
+./dualboot.py:302:    board = pick_board(a)
+./dualboot.py:305:        board = {v: k for k, v in BOARD_PRODUCTS.items()}.get(det[0]) or die(f"{det[0]} is not supported")
+./dualboot.py:313:        ver = next((v for b, v, _ in version_choices(board) if b == build), '')
+./dualboot.py:316:            ver = (precheck.apple_build(BOARD_PRODUCTS.get(board, ''), build) or {}).get('version', '')
+./dualboot.py:318:        ch = version_choices(board)
+./dualboot.py:325:    save_selected(board=board, build=build, version=ver, ipsw=os.path.abspath(a.ipsw) if a.ipsw else '')
+./dualboot.py:326:    say(f"selected iOS {ver} ({build}) for {board}. It MUST be the iOS version installed on the phone.")
+./dualboot.py:327:    if not a.no_precheck and not run_precheck(board, build, a.ipsw):
+./dualboot.py:330:def run_precheck(board, build, ipsw=None):
+./dualboot.py:332:    r = run(sys.executable, os.path.join(LIB, 'precheck.py'), '--build', build, '--board', board,
+./dualboot.py:339:    board = a.board or sel.get('board') or pick_board(a)
+./dualboot.py:340:    sys.exit(0 if run_precheck(board, build, a.ipsw or (sel.get('ipsw') or None if sel.get('build') == build else None)) else 1)
+./dualboot.py:343:    run(sys.executable, os.path.join(LIB, 'mkprofile.py'), '--ipsw', a.ipsw, '--board', pick_board(a),
+./dualboot.py:376:            if any(pt in f for pt in prof['product_types']) or set(prof['product_types']) & set(ipsw_products(f)):
+./dualboot.py:379:    say(f"downloading the IPSW {prof['product_types'][0]} {prof['build']} (~11 GB) into {dst} ...")
+./dualboot.py:380:    run('ipsw', 'download', 'ipsw', '--device', prof['product_types'][0], '--build', prof['build'], '--output', dst, check=False)
+./dualboot.py:383:        run('ipsw', 'download', 'appledb', '--os', 'iPadOS' if prof['product_types'][0].startswith('iPad') else 'iOS',
+./dualboot.py:384:            '--device', prof['product_types'][0], '--build', prof['build'],
+./dualboot.py:400:    ident = [b for b in m['BuildIdentities'] if b['Info'].get('DeviceClass', '').lower() == ws.profile['board']
+./dualboot.py:461:    product = ws.profile['product_types'][0]
+./dualboot.py:469:        d = precheck.fetch_parts(latest['url'], latest['build'], ws.profile['board'], ['RestoreSEP'])
+./dualboot.py:474:            ws.p('out/apticket.im4m'), '--board', ws.profile['board'], check=False, capture=True)
+./dualboot.py:486:    ident = [b for b in m['BuildIdentities'] if b['Info'].get('DeviceClass', '').lower() == ws.profile['board']
+./dualboot.py:510:        die("no serial port of the pwned-DFU board (/dev/cu.usbmodem*) - needed to read the setup result.\n"
+./dualboot.py:539:        prof = find_profile(sel.get('board') or pick_board(), sel['build'])
+./dualboot.py:542:            if not run_precheck(sel.get('board') or pick_board(), sel['build'], sel.get('ipsw') or None):
+./dualboot.py:545:    board = board_of(q) or die(f"unsupported device CPID {q.get('CPID')} BDID {q.get('BDID')}")
+./dualboot.py:547:    sel = sel if sel.get('board', board) == board else {}
+./dualboot.py:550:        ch = version_choices(board) or die("no versions available (network?) - use --build or --ipsw")
+./dualboot.py:555:        next((v for b, v, _ in version_choices(board) if b == build), '')
+./dualboot.py:557:    prof = ensure_profile(board, build, ver, given_ipsw)
+./dualboot.py:558:    say(f"iPhone ECID {q['ECID']}  {board}  -> profile iOS {prof['version']} ({prof['build']})"
+./dualboot.py:579:    ws.state.update(board=prof['board'], build=prof['build']); ws.save()
+./dualboot.py:631:    ws = Workspace(q['ECID'], find_profile(s['board'], s['build']))
+./dualboot.py:746:    say(f"system apps: {n} apps"); ssh.run('killall -9 SpringBoard', check=False)
+./dualboot.py:780:    ssh.run('/var/jb/usr/bin/sbreload >/dev/null 2>&1 || killall -9 SpringBoard', check=False)
+./dualboot.py:880:                        find_profile(s['board'], s['build']) or die(f"no profile for {s['build']}"))
+./dualboot.py:995:    board = base.profile['board']
+./dualboot.py:1001:        ch = version_choices(board) or die("no versions available (network?) - use --build or --ipsw")
+./dualboot.py:1005:    ver = next((v for b, v, _ in version_choices(board) if b == build), '')
+./dualboot.py:1008:        ver = (precheck.apple_build(BOARD_PRODUCTS.get(board, ''), build) or {}).get('version', '')
+./dualboot.py:1011:    if not a.skip_precheck and not run_precheck(board, build, a.ipsw):
+./dualboot.py:1013:    prof = ensure_profile(board, build, ver, a.ipsw)
+./dualboot.py:1015:    ws.state.update(board=board, build=build, base=os.path.basename(base.root)); ws.save()
+./dualboot.py:1016:    say(f"2nd iOS: iOS {prof['version']} ({build}) for {board}, workspace {ws.root}")
+./dualboot.py:1109:        ws = OS2Workspace(base.ecid, find_profile(s['board'], s['build']))
+./dualboot.py:1133:    s = sub.add_parser('versions', help='iOS versions: local profiles + Apple builds'); s.add_argument('--board')
+./dualboot.py:1136:    s.add_argument('--board', help=BOARD_HELP); s.add_argument('--build'); s.add_argument('--ipsw')
+./dualboot.py:1140:    s.add_argument('--build'); s.add_argument('--board'); s.add_argument('--ipsw')
+./dualboot.py:1142:    s.add_argument('--ipsw', required=True); s.add_argument('--board', help=BOARD_HELP)
+Binary file ./payload/boot/jbloader matches
+Binary file ./payload/pkgs/Sileo.app.tar matches
+Binary file ./payload/device/pfwatch matches
+Binary file ./payload/device/uicache27 matches
+Binary file ./payload/device/sysapps matches
+./README.md:65:- A usbliter8 board (RP2350) for pwned DFU. I'd recommend using the board i put the image below.
+./README.md:82:TSS: if Apple doesn't sign the build anymore (old builds, betas), the newest signed build's ticket is used for the setup chain, the patched iBoot doesn't check AP images. Once installed, 2nd Data uses the ticket installed on the phone (read over UART), this UART require you to have this kind of board:
+./README.md:84:![B4 PICO DFU board (RP2350, Lightning plug + USB-C): pwned DFU and UART over the Lightning port](pico_uart.jpg)
+./lib/boot_chain.py:107:            print(f" - {name} (not on this board)", flush=True); continue
+./lib/get_apticket.py:7:Usage: get_apticket.py BuildManifest.plist out.im4m [--behavior Update|Erase] [--board d421ap]
+./lib/get_apticket.py:13:        "Ap,SikaFuse", "Ap,Target", "Ap,TargetType", "ApBoardID", "ApChipID", "ApSecurityDomain",
+./lib/get_apticket.py:27:    ap.add_argument("--board", default="d421ap")
+./lib/get_apticket.py:31:           if i["Info"]["DeviceClass"].lower() == a.board and i["Info"].get("RestoreBehavior") == a.behavior
+./lib/mkprofile.py:2:"""Generate a dualboot version profile (profiles/<board>-<build>/) for any iOS 27.x build.
+./lib/mkprofile.py:19:usage: mkprofile.py --ipsw <X.ipsw | extracted dir> --board d421ap [--rootfs DIR] [--out DIR] [--force]
+./lib/mkprofile.py:29:BOARD_PRODUCTS = {'d421ap': ['iPhone12,3'], 'd431ap': ['iPhone12,5'], 'n104ap': ['iPhone12,1'], 'd79ap': ['iPhone12,8'],
+./lib/mkprofile.py:57:    def __init__(self, src, board):
+./lib/mkprofile.py:58:        self.src, self.board = src, board
+./lib/mkprofile.py:62:        ids = [i for i in self.manifest['BuildIdentities'] if i['Info'].get('DeviceClass', '').lower() == board
+./lib/mkprofile.py:64:        if not ids: die(f"{src}: no Erase identity for {board}")
+./lib/mkprofile.py:118:def generate(src, board, out_root, rootfs=None, force=False):
+./lib/mkprofile.py:119:    fw = Firmware(src, board)
+./lib/mkprofile.py:122:        pdir = os.path.join(out_root, f'{board}-{fw.build}')
+./lib/mkprofile.py:127:        say(f"iOS {fw.version} ({fw.build}) {board}: resolving every patch site for this build")
+./lib/mkprofile.py:145:            'board': board, 'product_types': BOARD_PRODUCTS.get(board, fw.manifest.get('SupportedProductTypes', [])),
+./lib/mkprofile.py:146:            'cpid': fw.ident.get('ApChipID', ''), 'bdid': fw.ident.get('ApBoardID', ''),
+./lib/mkprofile.py:166:        if tmpdir and os.path.isdir(tmpdir):      # a site failed to resolve: leave no half-written <board>-<build>.new
+./lib/mkprofile.py:172:    ap.add_argument('--ipsw'); ap.add_argument('--board', default='d421ap'); ap.add_argument('--rootfs')
+./lib/mkprofile.py:180:    generate(a.ipsw, a.board.lower(), a.out, a.rootfs, a.force)
+./lib/osbcfg.py:11:  OSB_BOARD    device class           (default: d421ap)
+./lib/osbcfg.py:24:BOARD = os.environ.get('OSB_BOARD') or 'd421ap'
+./lib/osbcfg.py:79:    ids = [b for b in m['BuildIdentities'] if b['Info'].get('DeviceClass', '').lower() == BOARD.lower()]
+./lib/osbcfg.py:82:        raise SystemExit(f"!! BuildManifest has no identity for {BOARD}")
+./lib/osbcfg.py:88:    """IPSW-relative path of a BuildManifest component for this board."""
+./lib/osbcfg.py:93:        raise SystemExit(f"!! BuildManifest identity for {BOARD} has no {key}")
+./lib/osbcfg.py:116:    """The board's BuildManifest identity lists this component (iPads have no WCHFirmwareUpdater)."""
+./lib/osbcfg.py:120:    """[(ipsw-relative path, img4 name, fourcc)], the layout mk_chain.FIRMWARE uses (components the board lacks are
+./lib/patchfinder/core.py:1176:    boards: Tuple[str, ...]
+./lib/patchfinder/core.py:1202:# One XNU fingerprint can cover several Apple build IDs (24A435/24A437/24A446 share one) and several boards
+./lib/patchfinder/core.py:1207:        boards=('d421ap', 'd431ap'), component='kernelcache.release.iphone12',
+./lib/patchfinder/core.py:1212:        boards=('n104ap',), component='kernelcache.release.iphone12b',
+./lib/patchfinder/core.py:1217:        boards=('n104ap', 'd421ap', 'd431ap'), component='kernelcache.release.iphone12b',
+./lib/patchfinder/core.py:1223:        boards=('n104ap',), component='kernelcache.release.iphone12b',
+./lib/patchfinder/core.py:1229:        boards=('n104ap',), component='kernelcache.release.iphone12b',
+./lib/patchfinder/core.py:1235:        boards=('n104ap',), component='kernelcache.release.iphone12b',
+./lib/patchfinder/core.py:1241:        boards=('n104ap',), component='kernelcache.release.iphone12b',
+./lib/patchfinder/core.py:1247:        boards=('n104ap', 'd421ap', 'd431ap'), component='kernelcache.release.iphone12b',
+Binary file ./lib/patchfinder/__pycache__/core.cpython-312.pyc matches
+./lib/mk_osb.py:60:        if n not in src:                      # not in this board's manifest (WCH on iPads)
+Binary file ./lib/__pycache__/common.cpython-312.pyc matches
+Binary file ./lib/__pycache__/mkprofile.cpython-312.pyc matches
+Binary file ./lib/__pycache__/precheck.cpython-312.pyc matches
+./lib/precheck.py:5:DeviceTree of the board (~70 MB, `ipsw extract --remote`, no 11 GB download) - then runs every patcher on them:
+./lib/precheck.py:18:The result is stored as "precheck" in profiles/<board>-<build>/profile.json. Exit status 0 = everything passed.
+./lib/precheck.py:21:usage: precheck.py --build 24B119 [--board d421ap] [--ipsw local.ipsw]
+./lib/precheck.py:82:SHARED_IPSW = {'iPhone12,3': ('iPhone12,5',), 'iPhone12,5': ('iPhone12,3',)}
+./lib/precheck.py:127:def has_identity(man, board):
+./lib/precheck.py:129:    return any(i['Info'].get('DeviceClass', '').lower() == board for i in m['BuildIdentities'])
+./lib/precheck.py:132:def fetch_parts(url, build, board, components=COMPONENTS):
+./lib/precheck.py:133:    """BuildManifest + the board's `components` of `build`, cached in $DUALBOOT_HOME/ipsw-parts/<IPSW name>.
+./lib/precheck.py:141:        if lm and has_identity(lm, board):
+./lib/precheck.py:148:    ids = [i for i in m['BuildIdentities'] if i['Info'].get('DeviceClass', '').lower() == board
+./lib/precheck.py:150:    if not ids: sys.exit(f"{build}: no Erase identity for {board}")
+./lib/precheck.py:177:    ap.add_argument('--build', required=True); ap.add_argument('--board', default='d421ap')
+./lib/precheck.py:181:    board = a.board.lower()
+./lib/precheck.py:182:    product = mkprofile.BOARD_PRODUCTS.get(board, [''])[0]
+./lib/precheck.py:183:    print(f"== pre-check {board} ({product}) build {a.build}", flush=True)
+./lib/precheck.py:201:            src = fetch_parts(url, a.build, board)
+./lib/precheck.py:203:        fw = mkprofile.Firmware(src, board)
+./lib/precheck.py:208:        pdir = os.path.join(PROFILES, f'{board}-{a.build}')
+./lib/precheck.py:211:            gen = mkprofile.generate(src, board, tmp if existed else PROFILES, rootfs=None, force=True)
+./lib/common.py:108:# A13 (T8030, CPID 0x8030) boards: iPhone 11 / 11 Pro / 11 Pro Max, iPhone SE (2nd gen), iPad (9th gen) Wi-Fi /
+./lib/common.py:109:# Cellular. Values from the IPSW BuildManifests (ApBoardID).
+./lib/common.py:110:A13_BOARDS = {0x04: 'n104ap', 0x06: 'd421ap', 0x02: 'd431ap', 0x10: 'd79ap', 0x18: 'j181ap', 0x1A: 'j182ap'}
+./lib/common.py:111:BOARD_PRODUCTS = {'n104ap': 'iPhone12,1', 'd421ap': 'iPhone12,3', 'd431ap': 'iPhone12,5', 'd79ap': 'iPhone12,8',
+./lib/common.py:113:BOARD_HELP = 'n104ap | d421ap | d431ap | d79ap | j181ap | j182ap (default: the connected device)'
+./lib/common.py:119:def board_of(q):
+./lib/common.py:120:    """(cpid, bdid) from irecovery -q -> board name (a profile's, else the A13 table)."""
+./lib/common.py:124:            return p['board']
+./lib/common.py:125:    return A13_BOARDS.get(bdid) if cpid == 0x8030 else None
+./lib/common.py:137:def find_profile(board, build):
+./lib/common.py:139:        if p['board'] == board and p['build'] == build:
+./lib/common.py:162:                 OSB_PROFILE=self.profile['dir'], OSB_BOARD=self.profile['board'],
+./lib/common.py:175:    """Raw 115200 8N1 reader for the pwned-DFU board's UART bridge; reconnects if the board re-enumerates."""
+./lib/mkdaemon.py:83:    # got for free, e.g. lockdownd -> com.apple.springboard.CFUserNotification (SpringBoard's
+./device/osb-boot.sh:42:# 4. PosterBoard wallpaper repair watcher (long-running)
+./device/osb-boot.sh:52:  # tweak injection (obhook in launchd -> TweakLoader/ElleKit + systemhook), once SpringBoard is settled.
+./device/osb-boot.sh:56:      line=$(ps -ax -o etime=,comm= | grep "SpringBoard.app/SpringBoard$" | head -1); t=${${=line}[1]}
+./device/osb-boot.sh:57:      [[ -n $t && $t != 00:0* && $t != 00:1* ]] && break      # SpringBoard up >= 20 s
+./device/osb-boot.sh:65:    # uicache27 --path, never a LaunchServices rebuild). Only then respring, so SpringBoard loads the tweaks and asks
+./device/obhook-restart.sh:11:      runningboardd cfprefsd fseventsd lockdownd SpringBoard backboardd wifid mDNSResponder powerd thermalmonitord
+./profiles/j182ap-24B119/lockdownd.ents-add.plist:5:	<key>com.apple.springboard.CFUserNotification</key>
+./profiles/j182ap-24B119/profile.json:2: "board": "j182ap",
+./profiles/j182ap-24B119/profile.json:3: "product_types": [
+./profiles/n104ap-24B119/lockdownd.ents-add.plist:5:	<key>com.apple.springboard.CFUserNotification</key>
+./profiles/n104ap-24B119/profile.json:2: "board": "n104ap",
+./profiles/n104ap-24B119/profile.json:3: "product_types": [
+./profiles/d421ap-24B119/lockdownd.ents-add.plist:5:	<key>com.apple.springboard.CFUserNotification</key>
+./profiles/d421ap-24B119/profile.json:2: "board": "d421ap",
+./profiles/d421ap-24B119/profile.json:3: "product_types": [
+./profiles/d421ap-24B119/profile.json:9: "ipsw_name": "iPhone12,3,iPhone12,5_27.2_24B119_Restore.ipsw",
+./profiles/_common/lockdownd.ents-add.plist:5:	<key>com.apple.springboard.CFUserNotification</key>
+./profiles/d431ap-24B119/lockdownd.ents-add.plist:5:	<key>com.apple.springboard.CFUserNotification</key>
+./profiles/d431ap-24B119/profile.json:2: "board": "d431ap",
+./profiles/d431ap-24B119/profile.json:3: "product_types": [
+./profiles/d431ap-24B119/profile.json:4:  "iPhone12,5"
+./profiles/d421ap-24C5037i/lockdownd.ents-add.plist:5:	<key>com.apple.springboard.CFUserNotification</key>
+./profiles/d421ap-24C5037i/profile.json:2: "board": "d421ap",
+./profiles/d421ap-24C5037i/profile.json:3: "product_types": [
+./profiles/d421ap-24C5037i/profile.json:10: "ipsw_name": "iPhone12,3,iPhone12,5_27.3_24C5037i_Restore.ipsw",
+./profiles/d421ap-24A446/lockdownd.ents-add.plist:5:	<key>com.apple.springboard.CFUserNotification</key>
+./profiles/d421ap-24A446/profile.json:2: "board": "d421ap",
+./profiles/d421ap-24A446/profile.json:3: "product_types": [
+./profiles/j181ap-24B119/lockdownd.ents-add.plist:5:	<key>com.apple.springboard.CFUserNotification</key>
+./profiles/j181ap-24B119/profile.json:2: "board": "j181ap",
+./profiles/j181ap-24B119/profile.json:3: "product_types": [
+./profiles/d421ap-24A437/lockdownd.ents-add.plist:5:	<key>com.apple.springboard.CFUserNotification</key>
+./profiles/d421ap-24A437/profile.json:2: "board": "d421ap",
+./profiles/d421ap-24A437/profile.json:3: "product_types": [
+./profiles/d79ap-24B119/lockdownd.ents-add.plist:5:	<key>com.apple.springboard.CFUserNotification</key>
+./profiles/d79ap-24B119/profile.json:2: "board": "d79ap",
+./profiles/d79ap-24B119/profile.json:3: "product_types": [
+./profiles/d431ap-24A446/lockdownd.ents-add.plist:5:	<key>com.apple.springboard.CFUserNotification</key>
+./profiles/d431ap-24A446/profile.json:2: "board": "d431ap",
+./profiles/d431ap-24A446/profile.json:3: "product_types": [
+./profiles/d431ap-24A446/profile.json:4:  "iPhone12,5"
+./profiles/d431ap-24A446/profile.json:10: "ipsw_name": "iPhone12,3,iPhone12,5_27.0.1_24A446_Restore.ipsw",
+./src/jbinit/jbloader.c:142:                                    "/usr/libexec/backboardd", NULL };
+./src/jbinit/sysapps.ents.plist:1:<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "https://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>FairPlay-Classic-Client</key><true/><key>application-identifier</key><string>com.apple.DataMigrator</string><key>aps-connection-initiate</key><true/><key>backupd-connection-initiate</key><true/><key>com.apple.CallHistory.sync.allow</key><true/><key>com.apple.CommCenter.fine-grained</key><array><string>spi</string><string>phone</string></array><key>com.apple.Contacts.database-allow</key><true/><key>com.apple.QuartzCore.displayable-context</key><true/><key>com.apple.QuartzCore.global-capture</key><true/><key>com.apple.QuartzCore.secure-capture</key><true/><key>com.apple.QuartzCore.secure-mode</key><true/><key>com.apple.SystemConfiguration.SCDynamicStore-write-access</key><true/><key>com.apple.accounts.connectbeforemigrationdidfinish</key><true/><key>com.apple.appprotectiond.read.access</key><true/><key>com.apple.appstored.private</key><true/><key>com.apple.assistant.settings</key><true/><key>com.apple.authkit.client.internal</key><true/><key>com.apple.backboardd.replacesystemapp</key><true/><key>com.apple.businessservicesd.prefetch</key><true/><key>com.apple.cards.all-access</key><true/><key>com.apple.cdp.statemachine</key><true/><key>com.apple.coretelephony.Calls.allow</key><true/><key>com.apple.developer.homekit</key><true/><key>com.apple.icloud.findmydeviced.access</key><true/><key>com.apple.icloud.findmydeviced.migration</key><true/><key>com.apple.itunesstored.private</key><true/><key>com.apple.keystore.lockassertion.global_assertion</key><true/><key>com.apple.keystore.stash.access</key><true/><key>com.apple.locationd.authorizeapplications</key><true/><key>com.apple.locationd.integritycheck</key><true/><key>com.apple.locationd.status</key><true/><key>com.apple.lsapplicationworkspace.rebuildappdatabases</key><true/><key>com.apple.managedconfiguration.profiled-access</key><true/><key>com.apple.mobileactivationd.spi</key><true/><key>com.apple.nano.nanoregistry.migrator</key><true/><key>com.apple.nano.nanoregistry.pairunpairobliterate</key><true/><key>com.apple.nfcd.hwmanager</key><true/><key>com.apple.payment.all-access</key><true/><key>com.apple.payment.configuration</key><true/><key>com.apple.private.CoreAuthentication.SPI</key><true/><key>com.apple.private.InstallCoordination.allowed</key><true/><key>com.apple.private.InstallCoordination.ignoreAppProtection</key><true/><key>com.apple.private.InstallCoordination.ignoreRemovability</key><true/><key>com.apple.private.InstallCoordination.ignoreRestrictions</key><true/><key>com.apple.private.LocalAuthentication.DTO</key><true/><key>com.apple.private.LocalAuthentication.Storage</key><true/><key>com.apple.private.LocalAuthentication.Storage.BiometricLivenessFlag</key><true/><key>com.apple.private.MobileContainerManager.allowed</key><true/><key>com.apple.private.Safari.History</key><true/><key>com.apple.private.accounts.allaccounts</key><true/><key>com.apple.private.amfi.can-check-trust-cache</key><true/><key>com.apple.private.amfi.data-migration</key><true/><key>com.apple.private.applecredentialmanager.allow</key><true/><key>com.apple.private.applecredentialmanager.devicerestrictedmode.allow</key><true/><key>com.apple.private.applemediaservices</key><true/><key>com.apple.private.appmanagedfeatures.configuration</key><true/><key>com.apple.private.appstored</key><array><string>Install</string></array><key>com.apple.private.assets.accessible-asset-types</key><array><string>com.apple.MobileAsset.CharacterVoices</string><string>com.apple.MobileAsset.VoiceServices.VoiceResources</string><string>com.apple.MobileAsset.VoiceServices.CustomVoice</string><string>com.apple.MobileAsset.VoiceServices.GryphonVoice</string><string>com.apple.MobileAsset.VoiceServices.CombinedVocalizerVoices</string><string>com.apple.MobileAsset.VoiceServicesVocalizerVoice</string><string>com.apple.MobileAsset.MacinTalkVoiceAssets</string><string>com.apple.MobileAsset.VoiceTriggerRePromptListiPhone12AndOlder</string><string>com.apple.MobileAsset.VoiceTriggerRePromptListiPhone13x</string><string>com.apple.MobileAsset.VoiceTriggerRePromptListiPhone14x</string><string>com.apple.MobileAsset.VoiceTriggerRePromptListiPhone15x</string><string>com.apple.MobileAsset.VoiceTriggerRePromptListiPad</string></array><key>com.apple.private.attribution.implicitly-assumed-identity</key><dict><key>type</key><string>path</string><key>value</key><string>/System/Library/PrivateFrameworks/DataMigration.framework/XPCServices/com.apple.migrationpluginwrapper</string></dict><key>com.apple.private.biome.read-write</key><array><string>SystemSettings.AppearanceSetup</string><string>SystemSettings.ChildMultitaskingSetup</string></array><key>com.apple.private.bmk.allow</key><true/><key>com.apple.private.calendar.migration</key><true/><key>com.apple.private.corerecents</key><true/><key>com.apple.private.corespotlight.internal</key><true/><key>com.apple.private.eligibilityd.bringUpDaemon</key><true/><key>com.apple.private.email</key><true/><key>com.apple.private.familycircle</key><true/><key>com.apple.private.followup</key><true/><key>com.apple.private.healthkit</key><true/><key>com.apple.private.healthkit.medicaliddata</key><array><string>read-write</string></array><key>com.apple.private.hid.client.event-monitor</key><true/><key>com.apple.private.homekit</key><true/><key>com.apple.private.ids.registration</key><true/><key>com.apple.private.imcore.imdpersistence.database-access</key><true/><key>com.apple.private.install.distributor-info-source</key><true/><key>com.apple.private.kernel.override-cpumon</key><true/><key>com.apple.private.lockdown.finegrained-get</key><array><string>com.apple.mobile.data_sync/NULL</string><string>com.apple.mobile.tethered_sync/Contacts</string><string>com.apple.mobile.tethered_sync/Calendars</string><string>com.apple.mobile.tethered_sync/Bookmarks</string><string>com.apple.mobile.tethered_sync/Notes</string><string>com.apple.mobile.tethered_sync/Mail Accounts</string></array><key>com.apple.private.lockdown.finegrained-remove</key><array><string>com.apple.mobile.iTunes.accessories/GymUsers</string><string>com.apple.mobile.iTunes.accessories/Empeds</string></array><key>com.apple.private.lockdown.finegrained-set</key><array><string>com.apple.mobile.tethered_sync/Contacts</string><string>com.apple.mobile.tethered_sync/Calendars</string><string>com.apple.mobile.tethered_sync/Bookmarks</string><string>com.apple.mobile.tethered_sync/Notes</string><string>com.apple.mobile.tethered_sync/Mail Accounts</string></array><key>com.apple.private.lockdownmoded.migrate</key><true/><key>com.apple.private.mobileinstall.allowedSPI</key><array><string>DataMigratorUpdateDataProtection</string><string>InstallForDataMigrator</string><string>InstallForLaunchServices</string><string>RegisterSafeHarbor</string><string>ProcessRestoredContainer</string><string>UninstallForLaunchServices</string><string>LookupSystemAppState</string><string>UpdateSystemAppState</string><string>SetSystemAppMigrationComplete</string><string>StoreListOfAppsRequiringPreInstallConsent</string><string>FetchListOfAppsRequiringPreInstallConsent</string></array><key>com.apple.private.octagon</key><true/><key>com.apple.private.photos.service.migration</key><true/><key>com.apple.private.safari.cloudtabs</key><true/><key>com.apple.private.screen-time</key><true/><key>com.apple.private.screen-time-settings</key><true/><key>com.apple.private.security.datavault.controller</key><true/><key>com.apple.private.security.storage.ManagedConfiguration</key><true/><key>com.apple.private.security.storage.Photos</key><true/><key>com.apple.private.security.storage.os_eligibility.readonly</key><true/><key>com.apple.private.tcc.allow</key><array><string>kTCCServiceAddressBook</string><string>kTCCServicePhotos</string><string>kTCCServiceMediaLibrary</string><string>kTCCServiceWillow</string></array><key>com.apple.private.tcc.manager.access.delete</key><array><string>kTCCServiceSiriAccess</string></array><key>com.apple.private.tcc.manager.access.modify</key><array><string>kTCCServiceLiverpool</string><string>kTCCServiceSiri</string><string>kTCCServiceSiriAccess</string><string>kTCCServiceUbiquity</string></array><key>com.apple.private.ubiquity-kvstore-access</key><array><string>com.apple.springboard</string><string>com.apple.backboardd</string></array><key>com.apple.private.ubiquity-kvstore-manage</key><true/><key>com.apple.private.voicememod.client</key><true/><key>com.apple.purplebuddy.budd.access</key><true/><key>com.apple.securebackupd.access</key><true/><key>com.apple.securesettingsmigration.host</key><true/><key>com.apple.security.application-groups</key><array><string>group.com.apple.stocks</string><string>group.com.apple.weather</string><string>group.com.apple.mail</string></array><key>com.apple.security.exception.files.absolute-path.read-only</key><array><string>/private/var/db/os_eligibility/</string></array><key>com.apple.security.exception.files.absolute-path.read-write</key><array><string>/private/var/mobile/Library/Preferences/com.apple.coreaudio.device.plist</string></array><key>com.apple.security.exception.files.home-relative-path.read-write</key><array><string>/Library/VoiceTrigger/</string></array><key>com.apple.security.exception.mach-lookup.global-name</key><array><string>com.apple.appmanagedfeatures.configuration</string><string>com.apple.ScreenTimeSettingsAgent.private</string><string>com.apple.siri.VoiceShortcuts.xpc</string><string>com.apple.mobile.keybagd.UserManager.xpc</string><string>com.apple.appstored.xpc</string><string>com.apple.usernotifications.usernotificationsettingsservice</string><string>com.apple.biome.access.user</string><string>com.apple.fairplayd.xpc</string><string>com.apple.appprotectiond.read</string></array><key>com.apple.security.exception.shared-preference.read-only</key><array><string>com.apple.private.health.heart-rhythm</string></array><key>com.apple.security.exception.shared-preference.read-write</key><array><string>com.apple.usernotificationskit</string></array><key>com.apple.security.iokit-user-client-class</key><array><string>AGXCommandQueue</string><string>AGXDevice</string><string>AGXDeviceUserClient</string><string>AGXSharedUserClient</string><string>AppleCredentialManagerUserClient</string><string>AppleJPEGDriverUserClient</string><string>AppleMobileFileIntegrityUserClient</string><string>IOAccelContext</string><string>IOAccelContext2</string><string>IOAccelDevice</string><string>IOAccelDevice2</string><string>IOAccelSharedUserClient</string><string>IOAccelSharedUserClient2</string><string>IOAccelSubmitter2</string><string>IOSurfaceAcceleratorClient</string><string>IOSurfaceRootUserClient</string><string>RootDomainUserClient</string></array><key>com.apple.security.system-groups</key><array><string>systemgroup.com.apple.configurationprofiles</string></array><key>com.apple.siri.VoiceShortcuts.xpc</key><true/><key>com.apple.springboard.CFUserNotification</key><true/><key>com.apple.springboard.application-removability.proxy</key><true/><key>com.apple.springboard.openurlinbackground</key><true/><key>com.apple.timed</key><true/><key>com.apple.usermanagerd.persona.fetch</key><true/><key>com.apple.wifi.manager-access</key><true/><key>fairplay-client</key><string>999035649</string><key>keychain-access-groups</key><array><string>apple</string><string>appleaccount</string><string>com.apple.cfnetwork</string><string>com.apple.mobilesafari</string></array><key>modify-anchor-certificates</key><true/></dict></plist>
+./src/pfwatch/pfruntimeprobe.m:1:// Probe and asserted runtime repair for PosterFoundation's cached PosterBoard contract.
+./src/pfwatch/pfruntimeprobe.m:218:            fprintf(stderr, "usage: %s <PosterBoard-pid> [--local-selftest|--apply|--ensure]\n", argv[0]);
+./src/pfwatch/pfwatch.m:1:// pfwatch - ensure each new PosterBoard PID receives the asserted runtime repair.
+./src/pfwatch/pfwatch.m:22:static const char *kWatchTarget = "/Applications/PosterBoard.app/PosterBoard";
+./src/pfwatch/pfwatch.m:23:// com.jbboot can run before SpringBoard creates ~/Library/SpringBoard on a
+./src/pfwatch/pfwatch.m:27:// it ever observes PosterBoard.
+./src/pfwatch/pfwatch.m:31:static pid_t posterboard_pid(void) {
+./src/pfwatch/pfwatch.m:108:        if (target == 0) target = posterboard_pid();
+./src/obhook/obhook.c:530:     * interposition comment). SpringBoard survives this ordering with injection
+./src/build.sh:99:# PosterBoard repair watcher, persona 99 for Sileo's root helper
+aaaa@aaaadeMacBook-Pro doublera1n % echo "===== get_apticket.py ====="
+sed -n '1,260p' lib/get_apticket.py
+
+echo
+echo "===== fetch_parts ====="
+grep -n -A80 -B10 'def fetch_parts' lib/precheck.py
+
+echo
+echo "===== profile 加载逻辑 ====="
+grep -n -A50 -B15 'profile' dualboot.py | head -180
+===== get_apticket.py =====
+#!/usr/bin/env python3
+"""
+Request a personalized APTicket (IM4M) for the connected device from Apple TSS,
+using the device's *current* ApNonce/SepNonce (read from recovery via irecovery -q).
+Uses pymobiledevice3's TSS client (https://github.com/doronz88/pymobiledevice3).
+
+Usage: get_apticket.py BuildManifest.plist out.im4m [--behavior Update|Erase] [--board d421ap]
+"""
+import argparse, asyncio, plistlib, re, subprocess, sys
+from pymobiledevice3.restore.tss import TSSRequest
+
+KEYS = ["UniqueBuildID", "Ap,OSLongVersion", "Ap,OSReleaseType", "Ap,ProductType", "Ap,SDKPlatform",
+        "Ap,SikaFuse", "Ap,Target", "Ap,TargetType", "ApBoardID", "ApChipID", "ApSecurityDomain",
+        "Ap,ProductMarketingVersion"]
+
+def irecv_query():
+    out = subprocess.run(["irecovery", "-q"], capture_output=True, text=True).stdout
+    q = dict(re.findall(r"^(\w+): (.*)$", out, re.M))
+    return q
+
+def to_int(v): return int(v, 16) if isinstance(v, str) and v.startswith("0x") else v
+
+async def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("manifest"); ap.add_argument("out")
+    ap.add_argument("--behavior", default="Update")
+    ap.add_argument("--board", default="d421ap")
+    a = ap.parse_args()
+    bm = plistlib.load(open(a.manifest, "rb"))
+    ids = [i for i in bm["BuildIdentities"]
+           if i["Info"]["DeviceClass"].lower() == a.board and i["Info"].get("RestoreBehavior") == a.behavior
+           and "Variant" in i["Info"]]
+    # release IPSWs: "Customer ..."; developer betas only carry "Developer Erase/Upgrade Install (IPSW)"
+    ids = [i for i in ids if "Customer" in i["Info"]["Variant"]] or ids
+    if not ids: sys.exit("no identity")
+    ident = ids[0]
+    print("identity:", ident["Info"]["Variant"])
+    q = irecv_query()
+    print("device:", q.get("ECID"), q.get("MODE"), "NONC", q.get("NONC"), "SNON", q.get("SNON"))
+    params = {
+        "ApECID": int(q["ECID"], 16),
+        "ApNonce": bytes.fromhex(q["NONC"]),
+        "ApSepNonce": bytes.fromhex(q["SNON"]),
+        "ApProductionMode": True,
+        "ApSecurityMode": True,
+        "ApSupportsImg4": True,
+        "Manifest": ident["Manifest"],
+    }
+    for k in KEYS:
+        if k in ident: params[k] = to_int(ident[k])
+    tss = TSSRequest()
+    tss.add_common_tags(params)
+    tss.add_ap_tags(params)
+    tss.add_ap_img4_tags(params)
+    resp = await tss.send_receive()
+    ticket = resp.ap_img4_ticket
+    open(a.out, "wb").write(ticket)
+    print(f"wrote {a.out} ({len(ticket)} bytes)")
+
+asyncio.run(main())
+
+===== fetch_parts =====
+122-    r = subprocess.run(['ipsw', 'extract', '--remote', url, '--pattern', pattern, '-o', out],
+123-                       capture_output=True, text=True)
+124-    if r.returncode: raise SystemExit(f"ipsw extract --remote failed:\n{(r.stdout + r.stderr)[-800:]}")
+125-
+126-
+127-def has_identity(man, board):
+128-    m = plistlib.load(open(man, 'rb'))
+129-    return any(i['Info'].get('DeviceClass', '').lower() == board for i in m['BuildIdentities'])
+130-
+131-
+132:def fetch_parts(url, build, board, components=COMPONENTS):
+133-    """BuildManifest + the board's `components` of `build`, cached in $DUALBOOT_HOME/ipsw-parts/<IPSW name>.
+134-    One directory per IPSW: iPhone 11 (iPhone12,1) and 11 Pro / Pro Max (iPhone12,3 + 12,5) ship separate IPSWs of
+135-    the same build. Returns the directory holding BuildManifest.plist (component paths are relative to it)."""
+136-    name = os.path.basename(urllib.parse.urlparse(url).path).replace('_Restore.ipsw', '').replace('.ipsw', '') or build
+137-    root = os.path.join(WORKROOT, 'ipsw-parts', name)
+138-    legacy = os.path.join(WORKROOT, 'ipsw-parts', build)            # older cache layout: one directory per build
+139-    if not os.path.exists(root) and os.path.isdir(legacy):
+140-        lm = find_in(legacy, 'BuildManifest.plist')
+141-        if lm and has_identity(lm, board):
+142-            os.rename(legacy, root)
+143-    os.makedirs(root, exist_ok=True)
+144-    if not find_in(root, 'BuildManifest.plist'):
+145-        remote_extract(url, r'^BuildManifest\.plist$', root)
+146-    man = find_in(root, 'BuildManifest.plist') or sys.exit("BuildManifest.plist not downloaded")
+147-    m = plistlib.load(open(man, 'rb'))
+148-    ids = [i for i in m['BuildIdentities'] if i['Info'].get('DeviceClass', '').lower() == board
+149-           and i['Info'].get('RestoreBehavior') == 'Erase']
+150-    if not ids: sys.exit(f"{build}: no Erase identity for {board}")
+151-    paths = [ids[0]['Manifest'][k]['Info']['Path'] for k in components]
+152-    missing = [p for p in paths if not find_in(root, p)]
+153-    if missing:
+154-        remote_extract(url, '^(' + '|'.join(re.escape(p) for p in missing) + ')$', root)
+155-    still = [p for p in paths if not find_in(root, p)]
+156-    if still: sys.exit(f"not downloaded: {still}")
+157-    return os.path.dirname(man)
+158-
+159-
+160-def raw_of(path):
+161-    from pyimg4 import IM4P
+162-    d = open(path, 'rb').read()
+163-    if d[:4] == b'\xcf\xfa\xed\xfe': return d
+164-    p = IM4P(d)
+165-    try: p.payload.decompress()
+166-    except Exception: pass
+167-    return bytes(p.payload.output().data)
+168-
+169-
+170-def record_keys(path):
+171-    txt = open(path).read().strip()
+172-    return sorted((r['id'], r['offset'], r['originalBytes'], r['replacementBytes']) for r in (json.loads(txt) if txt else []))
+173-
+174-
+175-def main():
+176-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+177-    ap.add_argument('--build', required=True); ap.add_argument('--board', default='d421ap')
+178-    ap.add_argument('--ipsw', help='local IPSW or an IPSW URL (otherwise found on ipsw.me / AppleDB; only the needed parts '
+179-                                   'are fetched with ipsw --remote)')
+180-    a = ap.parse_args()
+181-    board = a.board.lower()
+182-    product = mkprofile.BOARD_PRODUCTS.get(board, [''])[0]
+183-    print(f"== pre-check {board} ({product}) build {a.build}", flush=True)
+184-
+185-    v = ipsw_version()
+186-    if not v: sys.exit(f"{R}ipsw (blacktop) not installed - run ./setup.sh{N}")
+187-    if v < IPSW_MIN: sys.exit(f"{R}ipsw {'.'.join(map(str, v))} is too old (need >= {'.'.join(map(str, IPSW_MIN))}): "
+188-                              f"brew upgrade blacktop/tap/ipsw{N}")
+189-    apple = apple_build(product, a.build)
+190-    tmp = tempfile.mkdtemp(prefix='dualboot-precheck-')
+191-    try:
+192-        # ---------------------------------------------------------------- 0. sources
+193-        if a.ipsw and not a.ipsw.startswith(('http://', 'https://')):
+194-            src = a.ipsw
+195-            info('source', f"local IPSW {a.ipsw}")
+196-        else:
+197-            url = a.ipsw or (apple or {}).get('url')
+198-            if not url: sys.exit(f"{R}{a.build}: not found on ipsw.me or AppleDB for {product} (or offline) - pass --ipsw <file or URL>{N}")
+199-            print(f"   fetching boot components with ipsw --remote (iOS {(apple or {}).get('version', a.build)}"
+200-                  f"{', AppleDB' if (apple or {}).get('source') == 'appledb' else ''}) ...", flush=True)
+201-            src = fetch_parts(url, a.build, board)
+202-            info('source', f"{src}")
+203-        fw = mkprofile.Firmware(src, board)
+204-        if fw.build != a.build: sys.exit(f"{R}firmware is {fw.build}, expected {a.build}{N}")
+205-        comp = {k: fw.comp(k) for k in COMPONENTS}
+206-
+207-        # ---------------------------------------------------------------- 1. profile
+208-        pdir = os.path.join(PROFILES, f'{board}-{a.build}')
+209-        existed = os.path.exists(os.path.join(pdir, 'profile.json'))
+210-        try:
+211-            gen = mkprofile.generate(src, board, tmp if existed else PROFILES, rootfs=None, force=True)
+212-            if existed:
+
+===== profile 加载逻辑 =====
+1-#!/usr/bin/env python3
+2-"""dualboot - tethered dual-boot ("2nd Data") for A13 (T8030) devices: iPhone 11 / 11 Pro / 11 Pro Max,
+3-iPhone SE (2nd gen), iPad (9th gen).
+4-
+5-2nd Data = the phone's own stock, sealed System volume + a separate APFS volume "DataB" as /private/var, booted
+6-from pwned DFU with a patched kernel/iBoot and a rootless jailbreak (Procursus, Sileo, ElleKit, all fixes).
+7-Nothing on the stock OS is modified: a normal reboot always returns to stock iOS.
+8-
+9-  ./boot.sh                      boot 2nd Data (phone in pwned DFU). Use this every time.
+10-  ./dualboot.py                  same as boot if 2nd Data is installed for this phone, otherwise install
+11-  ./dualboot.py install          first-time setup (only when no DataB exists yet, or to repair)
+12-  ./dualboot.py remove           delete DataB and our Preboot files (back to a single stock OS)
+13-  ./dualboot.py provision        (re)apply all userland fixes over SSH while 2nd Data is running
+14-  ./dualboot.py status | doctor  show workspace / check the Mac
+15:  ./dualboot.py versions | select | precheck | profile
+16:                                 pick the iOS build installed on the phone; profiles are generated per build
+17-  ./dualboot.py os2 install|boot|provision|remove|status
+18-                                 DEVELOPING FEATURE (not device-tested): a 2nd iOS 27.x on its own volumes
+19-                                 (OS2System + OS2Data), installed from 2nd Data and booted from pwned DFU
+20-"""
+21-import argparse, glob, json, os, shutil, subprocess, sys, time
+22-
+23-ROOT = os.path.dirname(os.path.abspath(__file__))
+24-sys.path.insert(0, os.path.join(ROOT, 'lib'))
+25-from common import (serial_source, parse_ticket, SerialFileTail,
+26:                    say, warn, die, run, ask, host_check, irec_query, wait_dfu, board_of, list_profiles,
+27:                    find_profile, Workspace, SSH, SSH_PORT, device_udid, WORKROOT, LIB, PAYLOAD, BOARD_PRODUCTS,
+28-                    BOARD_HELP)
+29-
+30-# ------------------------------------------------------------------------------------------- workspaces
+31-def workspaces_for(ecid):
+32-    e = ecid.lower().replace('0x', '').zfill(16)
+33-    out = []
+34-    for d in sorted(glob.glob(os.path.join(WORKROOT, e + '-*'))):
+35-        st = os.path.join(d, 'state.json')
+36-        s = json.load(open(st)) if os.path.exists(st) else {}
+37-        out.append((d, s))
+38-    return out
+39-
+40-def installed_ws(q):
+41-    """Workspace of this phone that has a bootable 2nd Data build, or None."""
+42-    board = board_of(q)
+43-    for d, s in reversed(workspaces_for(q['ECID'])):
+44-        if s.get('installed') and os.path.exists(os.path.join(d, 'build/osbjb/Kernelcache.img4')):
+45:            prof = find_profile(s.get('board', board), s['build'])
+46-            if prof:
+47-                return Workspace(q['ECID'], prof)
+48-    return None
+49-
+50-def current_device(allow_ibec=True):
+51-    """irecovery view of the phone: pwned DFU, or (allow_ibec) our iBEC already running from an earlier try."""
+52-    q = irec_query()
+53-    if q and q.get('MODE') == 'DFU' and 'usbliter8' in q.get('PWND', ''):
+54-        return q, False
+55-    if allow_ibec and q and q.get('MODE') == 'Recovery' and 'NONC' in q and 'PWND' not in q:
+56-        return q, True
+57-    return wait_dfu(pwned=True), False
+58-
+59-# ------------------------------------------------------------------------------------------- boot
+60-def cmd_boot(a):
+61-    q, resume = current_device()
+62-    ws = installed_ws(q)
+63-    if not ws:
+64-        die("2nd Data is not installed for this iPhone (no workspace in ~/dualboot-work).\n"
+65-            "    -> run: ./dualboot.py install")
+66:    say(f"iPhone ECID {q['ECID']}  board {ws.profile['board']}  iOS {ws.profile['version']} ({ws.profile['build']})")
+67-    sel = load_selected()
+68:    if sel.get('board') == ws.profile['board'] and sel.get('build') and sel['build'] != ws.profile['build']:
+69-        die(f"the iPhone was last seen running iOS {sel.get('version', '')} ({sel['build']}), 2nd Data is built for "
+70:            f"{ws.profile['build']} - not booting a mismatched kernel/System. If stock iOS was updated: use Start "
+71-            "(./boot.sh), it updates 2nd Data and keeps DataB. If the selection is wrong: More -> Select iOS version.")
+72-    say("Boot 2nd Data ..." + (" (iBEC already running - continuing from the firmware stage)" if resume else ""))
+73-    args = ['--osbjb'] + (['--resume'] if resume else [])
+74-    r = run(sys.executable, os.path.join(LIB, 'boot_chain.py'), *args, env=ws.env(), check=False)
+75-    if r.returncode:
+76-        die("sending the boot chain failed - put the phone back into pwned DFU and run ./boot.sh again")
+77-    ws.state['last_boot'] = time.strftime('%Y-%m-%d %H:%M:%S'); ws.save()
+78-    if a.no_wait:
+79-        say("Chain sent. 2nd Data is booting."); return
+80-    say("Waiting for 2nd Data (SSH) ...")
+81-    udid = None
+82-    for _ in range(90):
+83-        udid = device_udid(q['ECID'])
+84-        if udid: break
+85-        time.sleep(2)
+86-    ssh = SSH(ws, udid) if udid else None
+87-    if ssh and ssh.wait(timeout=300):
+88-        say("2nd Data is up. Jailbreak ready (SSH: ./dualboot.py ssh).")
+89-        say("A normal reboot returns to stock iOS. To boot 2nd Data again: pwned DFU -> ./boot.sh")
+90-    else:
+91-        warn("no SSH after 5 minutes - check the screen (verbose boot) or the UART log")
+92-
+93-# ------------------------------------------------------------------------------------------- status / doctor
+94-def cmd_status(a):
+95-    say(f"workspace root: {WORKROOT}")
+96:    for p in list_profiles():
+97:        say(f"profile {p['name']}: {', '.join(p['product_types'])} iOS {p['version']} ({p['build']})"
+98-            f"{'' if p.get('tested') else '  [not device-tested]'}")
+99-    for d in sorted(glob.glob(os.path.join(WORKROOT, '*'))):
+100-        st = os.path.join(d, 'state.json')
+101-        if not os.path.exists(st):
+102-            continue
+103-        s = json.load(open(st))
+104-        say(f"  {os.path.basename(d)}: installed={s.get('installed', False)} last_boot={s.get('last_boot', '-')}")
+105-    q = irec_query()
+106-    if q:
+107-        say(f"device: MODE={q.get('MODE')} CPID={q.get('CPID')} BDID={q.get('BDID')} ECID={q.get('ECID')} "
+108-            f"PWND={q.get('PWND', '-')}")
+109-
+110-def cmd_doctor(a):
+111-    bad = host_check()
+112-    if bad:
+113-        warn("missing:"); [print("     -", b) for b in bad]; sys.exit(1)
+114-    say("Mac OK: all tools present (irecovery, iproxy, ldid, ipsw, pyimg4, pyusb, usbliter8ctl)")
+115-
+116-def cmd_ssh(a):
+117-    q = irec_query()
+118-    ecid = a.ecid or (q or {}).get('ECID')
+119:    cands = [Workspace(d.split('/')[-1].split('-')[0], find_profile(s.get('board'), s.get('build')))
+120-             for d, s in (workspaces_for(ecid) if ecid else []) if s.get('installed')]
+121-    if not cands:
+122-        # phone is booted (not in irecovery): take the only installed workspace
+123-        alls = [(d, json.load(open(os.path.join(d, 'state.json')))) for d in glob.glob(os.path.join(WORKROOT, '*'))
+124-                if os.path.exists(os.path.join(d, 'state.json')) and not os.path.basename(d).startswith(OS2_PREFIX)]
+125-        alls = [(d, s) for d, s in alls if s.get('installed')]
+126-        if len(alls) != 1: die("cannot tell which phone - use --ecid")
+127:        d, s = alls[0]; cands = [Workspace(os.path.basename(d).split('-')[0], find_profile(s['board'], s['build']))]
+128-    ws = cands[-1]
+129-    udid = device_udid(ws.ecid) or die("no iPhone on USB (is 2nd Data booted?)")
+130-    ssh = SSH(ws, udid); ssh._iproxy()
+131-    os.execvp('ssh', ['ssh', *ssh._base(), '-p', str(SSH_PORT), 'root@localhost', *a.remote])
+132-
+133-def build_osb(ws):
+134-    ws.py('mk_osb.py', capture=True)
+135-    r = ws.py('mk_osbjb.py', capture=True)
+136-    for l in r.stdout.strip().splitlines()[-4:]:
+137-        print('    ' + l)
+138-
+139-def only_installed_ws(ecid=None):
+140-    alls = []
+141-    for d in sorted(glob.glob(os.path.join(WORKROOT, '*'))):
+142-        st = os.path.join(d, 'state.json')
+143-        if os.path.exists(st) and not os.path.basename(d).startswith(OS2_PREFIX):
+144-            s = json.load(open(st))
+145-            if s.get('installed') and (not ecid or os.path.basename(d).startswith(ecid.lower().replace('0x', '').zfill(16))):
+146-                alls.append((d, s))
+147-    if len(alls) != 1:
+148-        die("need exactly one installed workspace (use --ecid)")
+149-    d, s = alls[0]
+150:    return Workspace(os.path.basename(d).split('-')[0], find_profile(s['board'], s['build']))
+151-
+152-def cmd_rebuild(a):
+153-    ws = only_installed_ws(a.ecid)
+154-    say(f"rebuilding the 2nd Data artifacts in {ws.root}")
+155-    build_osb(ws)
+156-
+157-# ------------------------------------------------------------------------------------------- auto
+158-def _in_pwned_dfu(q):
+159-    return bool(q) and ((q.get('MODE') == 'DFU' and 'usbliter8' in q.get('PWND', ''))
+160-                        or (q.get('MODE') == 'Recovery' and 'NONC' in q and 'PWND' not in q))
+161-
+162-def _select_from_running_ios(det):
+163-    """The phone is booted into iOS on USB: take its board and build as the selection (2nd Data must match it)."""
+164-    board = {v: k for k, v in BOARD_PRODUCTS.items()}.get(det[0]) or die(f"{det[0]} is not supported (A13 only)")
+165-    sel = load_selected()
+166-    if (sel.get('board'), sel.get('build')) != (board, det[2]):
+167-        save_selected(board=board, build=det[2], version=det[1], ipsw='')
+168-    say(f"{det[0]} ({board}) on iOS {det[1]} ({det[2]})")
+169-
+170-def cmd_auto(a):
+171-    """One button: find the phone, install 2nd Data on first use, boot it every time after. The user only puts the
+172-    phone into pwned DFU when asked (install asks once more, for the first 2nd Data boot)."""
+173-    for k, v in (('build', None), ('ipsw', None), ('skip_precheck', False), ('no_wait', False)):
+174-        if not hasattr(a, k):
+175-            setattr(a, k, v)
+176-    q = irec_query()
+177-    seen = None                                     # build the phone runs, when it was seen booted into iOS
+178-    if not _in_pwned_dfu(q):
+179-        det = detect_installed()
+180-        if det:
+aaaa@aaaadeMacBook-Pro doublera1n % 
